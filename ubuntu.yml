@@ -1,0 +1,67 @@
+# GitHub Secrets:
+# - SSH_PASSWD: <your_ssh_password>
+# - FRPC_SERVER_ADDR: <frpc_server_address>
+# - FRPC_SERVER_PORT: <frpc_server_port>
+# - FRPC_TOKEN: <frpc_token>
+
+name: Ubuntu SSH
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      # Install OpenSSH server
+      - name: Install OpenSSH server
+        run: sudo apt update && sudo apt install openssh-server -y
+
+      # Start SSH service
+      - name: Start SSH service
+        run: sudo systemctl start ssh
+
+      # Set up SSH connection
+      - name: Set up SSH connection
+        run: |
+          # sudo mkdir /var/run/sshd
+          echo 'root:${{ secrets.SSH_PASSWD }}' | sudo chpasswd
+          sudo sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+          sudo service ssh restart
+
+      # Check SSH service status
+      - name: Check SSH service status
+        run: systemctl status ssh
+
+      # Install frpc
+      - name: Install frpc
+        run: |
+          wget -O frp_linux_amd64.tar.gz https://github.com/fatedier/frp/releases/download/v0.54.0/frp_0.54.0_linux_amd64.tar.gz
+          tar -xzf frp_linux_amd64.tar.gz
+          mv frp_*_linux_amd64 frp_linux_amd64
+          sudo mv frp_linux_amd64/frpc /usr/local/bin/
+          rm -rf frp_linux_amd64*
+
+      # Configure frpc
+      - name: Configure frpc
+        run: |
+          echo "[common]" > frpc.ini
+          echo "server_addr = ${{ secrets.FRPC_SERVER_ADDR }}" >> frpc.ini
+          echo "server_port = ${{ secrets.FRPC_SERVER_PORT }}" >> frpc.ini
+          echo "token = ${{ secrets.FRPC_TOKEN }}" >> frpc.ini
+          echo "[ssh]" >> frpc.ini
+          echo "type = tcp" >> frpc.ini
+          echo "local_ip = 127.0.0.1" >> frpc.ini
+          echo "local_port = 22" >> frpc.ini
+          echo "remote_port = 6000" >> frpc.ini
+
+      # Start frpc
+      - name: Start frpc
+        run: sudo frpc -c frpc.ini &
+
+      - name: Don't kill instace
+        run: sleep 6h # Prevent to killing instance after failure
+      

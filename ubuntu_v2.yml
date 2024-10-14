@@ -1,0 +1,114 @@
+# GitHub Secrets:
+# - XRAY_CONFIG
+# - FRPC_SERVER_ADDR: <frpc_server_address>
+# - FRPC_SERVER_PORT: <frpc_server_port>
+# - FRPC_TOKEN: <frpc_token>
+# - HY2_CONFIG
+# - HY2_SOCKS5_URL
+# - SSH_PASSWD
+# - SSH_PUBLIC_KEY
+
+name: Ubuntu v2
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set Timezone to Asia/Shanghai
+        run: |
+          date
+          sudo timedatectl set-timezone Asia/Shanghai
+          date
+
+      - name: setup ssh
+        env:
+          SSH_PASSWD: ${{ secrets.SSH_PASSWD }}
+          SSH_PUBLIC_KEY: ${{ secrets.SSH_PUBLIC_KEY }}
+        run: |
+          sudo sh ./setup-ssh.sh "$SSH_PASSWD" "$SSH_PUBLIC_KEY"
+      
+      # Install hy2
+      - name: Install hy2
+        run: |
+          wget -q -O hysteria https://github.com/apernet/hysteria/releases/download/app%2Fv2.4.3/hysteria-linux-amd64-avx
+
+      - name: Get secret and create hysteria.yml
+        run: |
+          echo "$HY2_CONFIG" > hysteria.yml
+        env:
+          HY2_CONFIG: ${{ secrets.HY2_CONFIG }}
+
+      # Start hy2 client
+      - name: Start hy2 client
+        run: sudo chmod +x ./hysteria && sudo ./hysteria client -c ./hysteria.yml &
+
+          
+      # Install frpc
+      - name: Install frpc
+        run: |
+          wget -q -O frp_linux_amd64.tar.gz https://github.com/fatedier/frp/releases/download/v0.54.0/frp_0.54.0_linux_amd64.tar.gz
+          tar -xzf frp_linux_amd64.tar.gz
+          mv frp_*_linux_amd64 frp_linux_amd64
+          sudo mv frp_linux_amd64/frpc /usr/local/bin/
+          rm -rf frp_linux_amd64*
+
+      # Configure frpc
+      - name: Configure frpc
+        run: |
+          cat << EOF > frpc.toml
+          
+          serverAddr = "${{ secrets.FRPC_SERVER_ADDR }}"
+          serverPort = ${{ secrets.FRPC_SERVER_PORT }}
+          auth.method = "token"
+          auth.token = "${{ secrets.FRPC_TOKEN }}"
+          transport.protocol = "quic"
+          # transport.proxyURL = "${{ secrets.HY2_SOCKS5_URL }}"
+
+          [[proxies]]
+          name = "v2vv22"
+          type = "tcp"
+          localIp = "127.0.0.1"
+          localPort = 6050
+          remotePort = 6050
+
+          [[proxies]]
+          name = "github-ubuntu-v2"
+          type = "tcp"
+          localIp = "127.0.0.1"
+          localPort = 22
+          remotePort = 22224
+          
+          EOF
+
+          cat frpc.toml
+
+      # Start frpc
+      - name: Start frpc
+        run: sudo frpc -c frpc.toml &
+
+      - name: Download Xray
+        run: |
+          wget -q https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
+          unzip -d xray Xray-linux-64.zip
+
+      - name: Get secret and create config.json
+        run: |
+          echo "$XRAY_CONFIG" > config.json
+        env:
+          XRAY_CONFIG: ${{ secrets.XRAY_CONFIG }}
+
+      - name: Run Xray
+        run: sudo ./xray/xray -c config.json &
+          
+      - name: Don't kill instace
+        run: |
+          time=$(python3 ./time.py)
+          echo $time
+          sleep $time
+# /home/runner/work/auto/auto/.github/workflows/ubuntu_v2.yml
